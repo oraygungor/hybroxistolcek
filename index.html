@@ -72,7 +72,6 @@
             flex-grow: 1;
             background: radial-gradient(circle at center, #e2e8f0 0%, #cbd5e1 100%);
             position: relative;
-            /* Native scroll etkin, böylece tekerlek ve trackpad ile kaydırma çalışır */
             overflow: auto; 
             display: block; width: 100%; height: 100%;
             cursor: grab;
@@ -187,7 +186,7 @@
                         <span class="bg-blue-600 text-white rounded p-1 text-xs"><i class="fa-solid fa-vector-square"></i></span>
                         Hyrox Plan
                     </h1>
-                    <p class="text-xs text-slate-500 mt-1 font-medium ml-1">v7.3 Stable</p>
+                    <p class="text-xs text-slate-500 mt-1 font-medium ml-1">v7.4 Zoom Fix</p>
                 </div>
                 <button onclick="toggleSidebar()" class="md:hidden text-slate-400 hover:text-red-500 p-2">
                     <i class="fa-solid fa-xmark text-xl"></i>
@@ -396,9 +395,27 @@
 
             if(touchState.pinching && e.touches.length < 2) {
                 touchState.pinching = false;
-                canvasWrapper.style.transition = 'transform 0.1s ease-out';
+                
+                // SCROLL FIX: Calculate center point before reset
+                const rect = canvasAreaEl.getBoundingClientRect();
+                const scrollX = canvasAreaEl.scrollLeft;
+                const scrollY = canvasAreaEl.scrollTop;
+                
+                // Current center in canvas coordinates (approx)
+                const centerX = scrollX + (rect.width / 2);
+                const centerY = scrollY + (rect.height / 2);
+                
+                const ratio = tempPinchScale / currentScale;
+
+                canvasWrapper.style.transition = 'none'; 
                 canvasWrapper.style.transform = 'none'; 
-                renderPageWithScale(tempPinchScale);
+                
+                renderPageWithScale(tempPinchScale).then(() => {
+                    // Restore center position
+                    canvasAreaEl.scrollLeft = (centerX * ratio) - (rect.width / 2);
+                    canvasAreaEl.scrollTop = (centerY * ratio) - (rect.height / 2);
+                    setTimeout(() => { canvasWrapper.style.transition = 'transform 0.1s ease-out'; }, 50);
+                });
             }
         });
 
