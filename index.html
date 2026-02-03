@@ -1,1 +1,789 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hyrox İstanbul - Plan Ölçüm Paneli</title>
+    <!-- PDF.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
+    <!-- jsPDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- Tailwind & Icons -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; overflow: hidden; }
+        
+        #main-layout { display: flex; height: 100vh; }
+        
+        /* Sol Panel (Sidebar) */
+        #sidebar {
+            width: 320px;
+            background: white;
+            border-right: 1px solid #e5e7eb;
+            display: flex;
+            flex-direction: column;
+            z-index: 20;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.05);
+            flex-shrink: 0;
+        }
 
+        /* Orta Alan (Canvas) */
+        #canvas-area {
+            flex-grow: 1;
+            background-color: #525252;
+            position: relative;
+            overflow: auto;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 20px;
+            cursor: crosshair;
+        }
+
+        #canvas-wrapper {
+            position: relative;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        }
+        
+        canvas { display: block; }
+        #pdf-render { z-index: 1; }
+        #draw-layer { position: absolute; top: 0; left: 0; z-index: 2; }
+
+        .measurement-item {
+            transition: all 0.2s;
+            border-left: 4px solid transparent;
+        }
+        .measurement-item:hover { background-color: #f9fafb; }
+        
+        .floating-badge {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(17, 24, 39, 0.9);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-weight: 600;
+            z-index: 50;
+            display: none;
+            backdrop-filter: blur(4px);
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5); z-index: 100;
+            display: flex; align-items: center; justify-content: center;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- KONFIGURASYON AYARLARI (PRE-CONFIGURED) -->
+    <script>
+        const CONFIG = {
+            // Otomatik açılacak PDF dosya adı
+            pdfPath: 'hyroxistanbul.pdf', 
+            
+            // Sabitlenen Sihirli Sayı (Ölçek Faktörü)
+            defaultScaleFactor: 22.4626 
+        };
+    </script>
+
+    <div id="main-layout">
+        <!-- SOL PANEL: Kontroller ve Liste -->
+        <aside id="sidebar">
+            <div class="p-5 border-b border-gray-200 bg-gray-50">
+                <h1 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+                    <i class="fa-solid fa-ruler-combined text-blue-600"></i> Plan Ölçer
+                </h1>
+                <p class="text-xs text-gray-500 mt-1">v2.2 - Pre-Calibrated</p>
+            </div>
+
+            <!-- Dosya ve Kalibrasyon Bölümü -->
+            <div class="p-4 border-b border-gray-200 space-y-3">
+                
+                <!-- PDF Yükleme (Otomatik başarısız olursa görünür) -->
+                <div id="file-input-container" class="hidden">
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">PDF Dosyası</label>
+                    <label class="flex items-center justify-center w-full px-4 py-2 bg-white border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 text-sm">
+                        <i class="fa-solid fa-folder-open mr-2 text-gray-500"></i> Dosya Seç
+                        <input type="file" id="file-upload" accept="application/pdf" class="hidden"/>
+                    </label>
+                </div>
+
+                <!-- Kalibrasyon Durumu -->
+                <div>
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="block text-sm font-semibold text-gray-700">Ölçek Durumu</label>
+                        <span id="calib-status" class="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">Yükleniyor...</span>
+                    </div>
+                    
+                    <!-- Pre-calibrated olduğu için butonları gizleyebiliriz veya pasif tutabiliriz -->
+                    <div class="flex gap-2 opacity-50 hover:opacity-100 transition-opacity">
+                        <button id="btn-calibrate" onclick="startCalibrationMode()" class="flex-1 bg-orange-50 text-orange-700 hover:bg-orange-100 py-1 px-3 rounded text-[10px] font-bold transition border border-orange-200" title="Yeniden Kalibre Et (Gerekirse)">
+                             Yeniden Kalibre Et
+                        </button>
+                    </div>
+
+                    <!-- Manuel Key Girişi (Gizli) -->
+                    <div id="key-input-area" class="hidden mt-2 p-2 bg-yellow-50 rounded border border-yellow-200">
+                        <div class="flex gap-1">
+                            <input type="number" id="manual-scale-input" class="w-full text-xs border p-1 rounded">
+                            <button onclick="applyManualScale()" class="bg-yellow-600 text-white text-xs px-2 rounded">OK</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="magic-number-display" class="hidden mt-2 p-3 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800">
+                    <strong>Kalibrasyon Kaydı:</strong><br>
+                    Bu plan için Sihirli Sayı: <span id="magic-val" class="font-mono font-bold text-lg select-all cursor-pointer bg-white px-1 ml-1 border">---</span>
+                </div>
+            </div>
+
+            <!-- Ölçüm Butonları -->
+            <div class="p-4 border-b border-gray-200 bg-white sticky top-0">
+                <button id="btn-add-measure" onclick="startMeasurementMode()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg font-bold shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    <i class="fa-solid fa-plus"></i> Yeni Ölçüm Ekle
+                </button>
+                <div class="flex gap-2 mt-2">
+                     <button onclick="downloadResultPDF()" class="flex-1 bg-gray-800 hover:bg-gray-900 text-white py-1.5 rounded text-xs font-medium">
+                        <i class="fa-solid fa-file-pdf mr-1"></i> PDF İndir
+                    </button>
+                    <button onclick="clearAllMeasurements()" class="bg-white border border-gray-300 hover:bg-red-50 hover:text-red-600 text-gray-600 py-1.5 px-3 rounded text-xs" title="Tümünü Temizle">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Ölçüm Listesi -->
+            <div class="flex-1 overflow-y-auto p-2">
+                <div id="measurements-list" class="space-y-2">
+                    <!-- Liste buraya JS ile dolacak -->
+                    <div class="text-center text-gray-400 text-sm mt-10">
+                        <i class="fa-solid fa-ruler-vertical text-2xl mb-2 opacity-20"></i>
+                        <p>Henüz ölçüm yok.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Toplam İstatistik -->
+            <div class="p-4 bg-gray-800 text-white">
+                <div class="flex justify-between items-end">
+                    <span class="text-gray-400 text-xs uppercase font-bold">Toplam Mesafe</span>
+                    <span id="grand-total" class="text-2xl font-bold font-mono text-green-400">0.00 m</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ORTA PANEL: Görüntüleme -->
+        <main id="canvas-area">
+            <div id="zoom-controls" class="fixed top-5 right-8 bg-white shadow-md rounded-lg p-1 flex items-center gap-1 z-40 border border-gray-200">
+                <button onclick="changeZoom(-0.1)" class="w-8 h-8 hover:bg-gray-100 rounded text-gray-600 font-bold">-</button>
+                <span id="zoom-level" class="text-xs font-mono w-10 text-center">100%</span>
+                <button onclick="changeZoom(0.1)" class="w-8 h-8 hover:bg-gray-100 rounded text-gray-600 font-bold">+</button>
+                <button onclick="fitToScreen()" class="px-2 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded">SIĞDIR</button>
+            </div>
+
+            <div id="canvas-wrapper" class="hidden">
+                <canvas id="pdf-render"></canvas>
+                <canvas id="draw-layer"></canvas>
+            </div>
+
+            <!-- Yükleme Ekranı / Mesajı -->
+            <div id="loading-msg" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center hidden">
+                <i class="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500 mb-3"></i>
+                <p class="text-gray-600 font-medium">Yükleniyor...</p>
+            </div>
+        </main>
+    </div>
+
+    <!-- Canlı Ölçüm Balonu -->
+    <div id="live-distance" class="floating-badge">
+        <i class="fa-solid fa-pen-ruler mr-2"></i> <span id="dist-val">0.00 m</span>
+    </div>
+
+    <!-- İsimlendirme Modalı -->
+    <div id="name-modal" class="modal-overlay hidden">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-80">
+            <h3 class="text-lg font-bold text-gray-800 mb-2">Ölçüm Tamamlandı</h3>
+            <p class="text-sm text-gray-500 mb-4">Bu ölçüme bir isim verin:</p>
+            <input type="text" id="measure-name-input" class="w-full border p-2 rounded mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Örn: Koşu Yolu 1">
+            <div class="flex gap-2">
+                <button onclick="saveMeasurementName()" class="w-full bg-blue-600 text-white py-2 rounded font-bold hover:bg-blue-700">Kaydet</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Kalibrasyon Modalı -->
+    <div id="area-modal" class="modal-overlay hidden">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-80 text-center">
+            <h3 class="text-lg font-bold text-gray-800 mb-2">Referans Alan</h3>
+            <p class="text-sm text-gray-500 mb-4">Seçtiğiniz alan kaç m²?</p>
+            <input type="number" id="modal-area-input" class="w-full border p-3 rounded text-center text-xl font-bold mb-4" placeholder="m²">
+            <div class="flex gap-2">
+                <button onclick="closeAreaModal(false)" class="flex-1 bg-gray-200 text-gray-700 py-2 rounded">İptal</button>
+                <button onclick="closeAreaModal(true)" class="flex-1 bg-orange-600 text-white py-2 rounded font-bold">Onayla</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Mesaj -->
+    <div id="toast" class="fixed bottom-10 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded shadow opacity-0 pointer-events-none transition-opacity z-[999]"></div>
+
+    <script>
+        // --- GLOBAL DEĞİŞKENLER ---
+        let pdfDoc = null;
+        let currentScale = 1.0; 
+        let baseViewportWidth = 0;
+        
+        // Sabitlenen Sihirli Sayı
+        let baseScaleFactor = CONFIG.defaultScaleFactor || null; 
+
+        let measurements = [];
+        let currentDrawing = { points: [], color: null };
+        
+        let appState = 'IDLE'; 
+        let isRendering = false;
+        let mousePos = { x: 0, y: 0 };
+        let hoverStartPoint = false; 
+
+        const COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
+
+        const canvasWrapper = document.getElementById('canvas-wrapper');
+        const pdfCanvas = document.getElementById('pdf-render');
+        const drawCanvas = document.getElementById('draw-layer');
+        const drawCtx = drawCanvas.getContext('2d');
+        const loadingMsg = document.getElementById('loading-msg');
+        const btnMeasure = document.getElementById('btn-add-measure');
+        const btnCalibrate = document.getElementById('btn-calibrate');
+        
+        // --- BAŞLANGIÇ (INIT) ---
+        window.onload = async function() {
+            // Config'de PDF yolu varsa otomatik yüklemeyi dene
+            if (CONFIG.pdfPath) {
+                loadingMsg.classList.remove('hidden');
+                
+                try {
+                    const response = await fetch(CONFIG.pdfPath);
+                    
+                    if (!response.ok) {
+                        throw new Error("Dosya bulunamadı: " + response.status);
+                    }
+                    
+                    const blob = await response.blob();
+                    const arrayBuffer = await blob.arrayBuffer();
+                    await loadPDF(new Uint8Array(arrayBuffer));
+
+                } catch (e) {
+                    console.warn("Otomatik yükleme başarısız:", e);
+                    loadingMsg.classList.add('hidden');
+                    document.getElementById('file-input-container').classList.remove('hidden');
+                    showToast("Otomatik PDF bulunamadı, manuel yükleyin.");
+                }
+            } else {
+                 document.getElementById('file-input-container').classList.remove('hidden');
+            }
+            
+            // Otomatik Scale Factor Uygula
+            if (baseScaleFactor) {
+                updateCalibrationStatus(true);
+            }
+        };
+
+        // Manuel Dosya Yükleme
+        document.getElementById('file-upload').addEventListener('change', async function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            loadingMsg.classList.remove('hidden');
+            document.getElementById('file-input-container').classList.add('hidden'); // Başarılı olursa gizle
+            
+            const fileReader = new FileReader();
+            fileReader.onload = function() {
+                loadPDF(new Uint8Array(this.result));
+            };
+            fileReader.readAsArrayBuffer(file);
+        });
+
+        // --- PDF ENGINE ---
+        async function loadPDF(data) {
+            try {
+                pdfDoc = await pdfjsLib.getDocument(data).promise;
+                const page = await pdfDoc.getPage(1);
+                const viewport = page.getViewport({ scale: 1.0 });
+                baseViewportWidth = viewport.width;
+
+                loadingMsg.classList.add('hidden');
+                // document.getElementById('empty-state')?.classList.add('hidden');
+                canvasWrapper.classList.remove('hidden');
+                btnCalibrate.disabled = false;
+
+                fitToScreen();
+                showToast("PDF Hazır.");
+            } catch (err) {
+                console.error(err);
+                loadingMsg.classList.add('hidden');
+                alert("PDF işlenirken hata oluştu.");
+            }
+        }
+
+        function fitToScreen() {
+            if (!pdfDoc) return;
+            const containerWidth = document.getElementById('canvas-area').clientWidth * 0.95;
+            const newScale = containerWidth / baseViewportWidth;
+            renderPageWithScale(newScale);
+        }
+
+        async function changeZoom(delta) {
+            if (!pdfDoc || isRendering) return;
+            let newScale = currentScale + delta;
+            if (newScale < 0.1) newScale = 0.1;
+            await renderPageWithScale(newScale);
+        }
+
+        async function renderPageWithScale(newScale) {
+            if (isRendering) return;
+            isRendering = true;
+
+            const oldScale = currentScale;
+            currentScale = newScale;
+            document.getElementById('zoom-level').innerText = Math.round(currentScale * 100) + '%';
+
+            const page = await pdfDoc.getPage(1);
+            const viewport = page.getViewport({ scale: currentScale });
+
+            pdfCanvas.height = viewport.height;
+            pdfCanvas.width = viewport.width;
+            drawCanvas.height = viewport.height;
+            drawCanvas.width = viewport.width;
+
+            const renderContext = {
+                canvasContext: pdfCanvas.getContext('2d'),
+                viewport: viewport
+            };
+
+            await page.render(renderContext).promise;
+
+            if (oldScale !== currentScale) {
+                const ratio = currentScale / oldScale;
+                
+                measurements.forEach(m => {
+                    m.points = m.points.map(p => ({ x: p.x * ratio, y: p.y * ratio }));
+                });
+                
+                if (currentDrawing.points.length > 0) {
+                    currentDrawing.points = currentDrawing.points.map(p => ({ x: p.x * ratio, y: p.y * ratio }));
+                }
+            }
+
+            redrawCanvas();
+            isRendering = false;
+        }
+
+        // --- İNTERAKSİYON (MOUSE & KLAVYE) ---
+        drawCanvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0) handleLeftClick(e);
+            if (e.button === 2) { e.preventDefault(); finishAction(); }
+        });
+        drawCanvas.addEventListener('contextmenu', e => e.preventDefault());
+        drawCanvas.addEventListener('mousemove', (e) => {
+            const rect = drawCanvas.getBoundingClientRect();
+            // CSS scale düzeltmesi
+            const scaleX = drawCanvas.width / rect.width;
+            const scaleY = drawCanvas.height / rect.height;
+            
+            mousePos = {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+
+            hoverStartPoint = false;
+            if (appState === 'CALIBRATING' && currentDrawing.points.length > 2) {
+                const startPt = currentDrawing.points[0];
+                const dist = Math.hypot(startPt.x - mousePos.x, startPt.y - mousePos.y);
+                if (dist < 15) { 
+                    hoverStartPoint = true;
+                    drawCanvas.style.cursor = 'pointer';
+                } else {
+                    drawCanvas.style.cursor = 'crosshair';
+                }
+            } else {
+                 drawCanvas.style.cursor = 'crosshair';
+            }
+            redrawCanvas();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') finishAction();
+            if (e.key === 'Enter') {
+                if (!document.getElementById('name-modal').classList.contains('hidden')) saveMeasurementName();
+                if (!document.getElementById('area-modal').classList.contains('hidden')) closeAreaModal(true);
+            }
+        });
+
+        function handleLeftClick(e) {
+            if (appState === 'IDLE') return;
+
+            if (appState === 'CALIBRATING' && hoverStartPoint) {
+                finishAction();
+                return;
+            }
+
+            currentDrawing.points.push({ x: mousePos.x, y: mousePos.y });
+            redrawCanvas();
+        }
+
+        // --- MODLAR VE AKSİYONLAR ---
+        
+        function startCalibrationMode() {
+            appState = 'CALIBRATING';
+            currentDrawing = { points: [], color: '#f97316' }; 
+            showToast("Odanın köşelerini işaretleyin. Bitirmek için başladığınız yere tıklayın.");
+        }
+
+        function startMeasurementMode() {
+            if (!baseScaleFactor) {
+                showToast("Önce Kalibrasyon Yapın!");
+                return;
+            }
+            appState = 'MEASURING';
+            const nextColor = COLORS[measurements.length % COLORS.length];
+            currentDrawing = { points: [], color: nextColor };
+            
+            document.getElementById('live-distance').style.display = 'block';
+            document.getElementById('dist-val').innerText = "0.00 m";
+            showToast("Ölçüm başladı. Bitirmek için ESC.");
+        }
+
+        function finishAction() {
+            if (appState === 'CALIBRATING') {
+                if (currentDrawing.points.length > 2) {
+                    document.getElementById('modal-area-input').value = '';
+                    document.getElementById('area-modal').classList.remove('hidden');
+                    document.getElementById('modal-area-input').focus();
+                } else {
+                    currentDrawing.points = [];
+                    redrawCanvas();
+                    appState = 'IDLE';
+                }
+            } else if (appState === 'MEASURING') {
+                if (currentDrawing.points.length > 1) {
+                    document.getElementById('measure-name-input').value = `Ölçüm ${measurements.length + 1}`;
+                    document.getElementById('name-modal').classList.remove('hidden');
+                    document.getElementById('measure-name-input').focus();
+                } else {
+                    currentDrawing = { points: [], color: null };
+                    appState = 'IDLE';
+                    document.getElementById('live-distance').style.display = 'none';
+                    redrawCanvas();
+                }
+            }
+        }
+
+        // --- KALİBRASYON MANTIĞI ---
+        function closeAreaModal(confirmed) {
+            document.getElementById('area-modal').classList.add('hidden');
+            if (confirmed) {
+                const areaVal = parseFloat(document.getElementById('modal-area-input').value);
+                if (areaVal > 0) {
+                    calculateCalibration(areaVal);
+                } else {
+                    alert("Geçersiz alan!");
+                    currentDrawing.points = [];
+                    redrawCanvas();
+                    appState = 'IDLE';
+                }
+            } else {
+                currentDrawing.points = [];
+                redrawCanvas();
+                appState = 'IDLE';
+            }
+        }
+
+        function calculateCalibration(realArea) {
+            const pixelArea = calculatePolygonArea(currentDrawing.points);
+            const pixelsPerMeter = Math.sqrt(pixelArea / realArea);
+            
+            baseScaleFactor = pixelsPerMeter / currentScale;
+
+            updateCalibrationStatus(true);
+            
+            document.getElementById('magic-number-display').classList.remove('hidden');
+            document.getElementById('magic-val').innerText = baseScaleFactor.toFixed(4);
+            
+            showToast("Kalibre Edildi! Şimdi ölçüm yapabilirsiniz.");
+            
+            currentDrawing = { points: [], color: null };
+            appState = 'IDLE';
+            redrawCanvas();
+        }
+
+        function toggleKeyInput() {
+            const el = document.getElementById('key-input-area');
+            el.classList.toggle('hidden');
+        }
+
+        function applyManualScale() {
+            const val = parseFloat(document.getElementById('manual-scale-input').value);
+            if (val > 0) {
+                baseScaleFactor = val;
+                updateCalibrationStatus(true);
+                document.getElementById('key-input-area').classList.add('hidden');
+                showToast("Faktör Uygulandı.");
+            }
+        }
+
+        function updateCalibrationStatus(isActive) {
+            const statusEl = document.getElementById('calib-status');
+            if (isActive && baseScaleFactor) {
+                statusEl.innerText = "Aktif (" + baseScaleFactor.toFixed(2) + ")";
+                statusEl.className = "text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full";
+                btnMeasure.disabled = false;
+            } else {
+                statusEl.innerText = "Yapılmadı";
+                statusEl.className = "text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full";
+                btnMeasure.disabled = true;
+            }
+        }
+
+        // --- ÖLÇÜM KAYDETME ---
+        function saveMeasurementName() {
+            const name = document.getElementById('measure-name-input').value || `Ölçüm ${measurements.length + 1}`;
+            
+            let totalDistPx = 0;
+            for(let i=1; i<currentDrawing.points.length; i++) {
+                totalDistPx += Math.hypot(
+                    currentDrawing.points[i].x - currentDrawing.points[i-1].x,
+                    currentDrawing.points[i].y - currentDrawing.points[i-1].y
+                );
+            }
+            
+            const currentPixelsPerMeter = baseScaleFactor * currentScale;
+            const lengthM = totalDistPx / currentPixelsPerMeter;
+
+            measurements.push({
+                id: Date.now(),
+                name: name,
+                points: [...currentDrawing.points],
+                color: currentDrawing.color,
+                length: lengthM
+            });
+
+            document.getElementById('name-modal').classList.add('hidden');
+            document.getElementById('live-distance').style.display = 'none';
+            
+            currentDrawing = { points: [], color: null };
+            appState = 'IDLE';
+            
+            updateMeasurementList();
+            redrawCanvas();
+        }
+
+        function updateMeasurementList() {
+            const listEl = document.getElementById('measurements-list');
+            listEl.innerHTML = '';
+            
+            let grandTotal = 0;
+
+            measurements.forEach((m, index) => {
+                grandTotal += m.length;
+                
+                const item = document.createElement('div');
+                item.className = 'measurement-item flex items-center justify-between p-2 bg-white rounded border border-gray-100 mb-1';
+                item.style.borderLeftColor = m.color;
+                
+                item.innerHTML = `
+                    <div class="truncate pr-2">
+                        <div class="font-bold text-gray-700 text-sm truncate" title="${m.name}">${m.name}</div>
+                        <div class="text-xs text-gray-500">${m.length.toFixed(2)}m</div>
+                    </div>
+                    <button onclick="deleteMeasurement(${index})" class="text-gray-400 hover:text-red-500 p-1">
+                        <i class="fa-solid fa-times"></i>
+                    </button>
+                `;
+                listEl.appendChild(item);
+            });
+
+            document.getElementById('grand-total').innerText = grandTotal.toFixed(2) + " m";
+            
+            if (measurements.length === 0) {
+                listEl.innerHTML = `<div class="text-center text-gray-400 text-sm mt-10"><p>Liste boş.</p></div>`;
+            }
+        }
+
+        function deleteMeasurement(index) {
+            measurements.splice(index, 1);
+            updateMeasurementList();
+            redrawCanvas();
+        }
+        
+        function clearAllMeasurements() {
+            if(confirm("Tüm ölçümleri silmek istediğinize emin misiniz?")) {
+                measurements = [];
+                updateMeasurementList();
+                redrawCanvas();
+            }
+        }
+
+        // --- ÇİZİM MOTORU ---
+        function redrawCanvas() {
+            drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+            
+            drawCtx.lineCap = 'round';
+            drawCtx.lineJoin = 'round';
+            drawCtx.font = "bold 14px Arial";
+
+            measurements.forEach(m => {
+                drawCtx.beginPath();
+                drawCtx.lineWidth = 3;
+                drawCtx.strokeStyle = m.color;
+                drawCtx.fillStyle = m.color;
+
+                if (m.points.length > 0) {
+                    drawCtx.moveTo(m.points[0].x, m.points[0].y);
+                    for (let i = 1; i < m.points.length; i++) {
+                        drawCtx.lineTo(m.points[i].x, m.points[i].y);
+                    }
+                    drawCtx.stroke();
+                    
+                    m.points.forEach(p => {
+                        drawCtx.beginPath();
+                        drawCtx.arc(p.x, p.y, 3, 0, Math.PI*2);
+                        drawCtx.fill();
+                    });
+
+                    const label = `${m.name} (${m.length.toFixed(1)}m)`;
+                    const startP = m.points[0];
+                    drawCtx.fillStyle = "rgba(255, 255, 255, 0.8)";
+                    drawCtx.fillRect(startP.x + 8, startP.y - 18, drawCtx.measureText(label).width + 6, 20);
+                    drawCtx.fillStyle = m.color; 
+                    drawCtx.fillText(label, startP.x + 10, startP.y - 4);
+                }
+            });
+
+            if (currentDrawing.points.length > 0) {
+                drawCtx.beginPath();
+                drawCtx.lineWidth = (appState === 'CALIBRATING') ? 2 : 3;
+                drawCtx.strokeStyle = currentDrawing.color;
+                drawCtx.fillStyle = currentDrawing.color;
+
+                drawCtx.moveTo(currentDrawing.points[0].x, currentDrawing.points[0].y);
+                for (let i = 1; i < currentDrawing.points.length; i++) {
+                    drawCtx.lineTo(currentDrawing.points[i].x, currentDrawing.points[i].y);
+                }
+                
+                drawCtx.lineTo(mousePos.x, mousePos.y);
+                
+                if (appState === 'CALIBRATING' && hoverStartPoint) {
+                    drawCtx.closePath();
+                    drawCtx.fillStyle = 'rgba(249, 115, 22, 0.3)';
+                    drawCtx.fill();
+                }
+
+                drawCtx.stroke();
+                
+                currentDrawing.points.forEach(p => {
+                    drawCtx.beginPath();
+                    drawCtx.arc(p.x, p.y, 4, 0, Math.PI*2);
+                    drawCtx.fill();
+                });
+
+                if (appState === 'MEASURING' && baseScaleFactor) {
+                    let tempDistPx = 0;
+                    for (let i = 1; i < currentDrawing.points.length; i++) {
+                        tempDistPx += Math.hypot(currentDrawing.points[i].x - currentDrawing.points[i-1].x, currentDrawing.points[i].y - currentDrawing.points[i-1].y);
+                    }
+                    const lastP = currentDrawing.points[currentDrawing.points.length-1];
+                    tempDistPx += Math.hypot(mousePos.x - lastP.x, mousePos.y - lastP.y);
+                    
+                    const currentPixelsPerMeter = baseScaleFactor * currentScale;
+                    const valM = tempDistPx / currentPixelsPerMeter;
+                    
+                    document.getElementById('dist-val').innerText = valM.toFixed(2) + " m";
+                }
+            }
+        }
+
+        // --- PDF İNDİRME ---
+        async function downloadResultPDF() {
+            if (!pdfDoc) { showToast("PDF yok."); return; }
+            if (measurements.length === 0 && appState !== 'MEASURING') { showToast("Ölçüm yok."); }
+            
+            showToast("PDF Oluşturuluyor...");
+            await new Promise(r => setTimeout(r, 100)); 
+
+            try {
+                const { jsPDF } = window.jspdf;
+                
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = pdfCanvas.width;
+                tempCanvas.height = pdfCanvas.height;
+                const ctx = tempCanvas.getContext('2d');
+
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+                ctx.drawImage(pdfCanvas, 0, 0);
+                ctx.drawImage(drawCanvas, 0, 0);
+
+                ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+                ctx.fillRect(10, 10, 250, 40 + (measurements.length * 20));
+                ctx.strokeStyle = "#000";
+                ctx.strokeRect(10, 10, 250, 40 + (measurements.length * 20));
+                
+                ctx.fillStyle = "#000";
+                ctx.font = "bold 16px Arial";
+                ctx.fillText("ÖLÇÜM RAPORU", 20, 35);
+                
+                ctx.font = "12px Arial";
+                let yPos = 60;
+                measurements.forEach(m => {
+                    ctx.fillStyle = m.color;
+                    ctx.fillText(`■ ${m.name}: ${m.length.toFixed(2)}m`, 20, yPos);
+                    yPos += 20;
+                });
+
+                const imgData = tempCanvas.toDataURL('image/jpeg', 0.85);
+                const orientation = tempCanvas.width > tempCanvas.height ? 'l' : 'p';
+                
+                const doc = new jsPDF({
+                    orientation: orientation,
+                    unit: 'px',
+                    format: [tempCanvas.width, tempCanvas.height]
+                });
+
+                doc.addImage(imgData, 'JPEG', 0, 0, tempCanvas.width, tempCanvas.height);
+                doc.save('hyrox_plan_olcum.pdf');
+                showToast("İndirme Başladı.");
+
+            } catch (e) {
+                console.error(e);
+                showToast("PDF Hatası.");
+            }
+        }
+
+        function calculatePolygonArea(points) {
+            let total = 0;
+            for (let i = 0, l = points.length; i < l; i++) {
+                const addX = points[i].x;
+                const addY = points[i == l - 1 ? 0 : i + 1].y;
+                const subX = points[i == l - 1 ? 0 : i + 1].x;
+                const subY = points[i].y;
+                total += (addX * addY * 0.5);
+                total -= (subX * subY * 0.5);
+            }
+            return Math.abs(total);
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.innerText = msg;
+            t.style.opacity = '1';
+            setTimeout(() => { t.style.opacity = '0'; }, 3000);
+        }
+    </script>
+</body>
+</html>
