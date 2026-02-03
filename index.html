@@ -49,6 +49,7 @@
         
         #sidebar.open { transform: translateX(0); }
 
+        /* Desktop Hover Trigger */
         @media (min-width: 768px) {
             #sidebar { transform: translateX(-305px); } 
             #sidebar:hover { transform: translateX(0); }
@@ -186,7 +187,7 @@
                         <span class="bg-blue-600 text-white rounded p-1 text-xs"><i class="fa-solid fa-vector-square"></i></span>
                         Hyrox Plan
                     </h1>
-                    <p class="text-xs text-slate-500 mt-1 font-medium ml-1">v7.1 Final</p>
+                    <p class="text-xs text-slate-500 mt-1 font-medium ml-1">v7.2 Final</p>
                 </div>
                 <button onclick="toggleSidebar()" class="md:hidden text-slate-400 hover:text-red-500 p-2">
                     <i class="fa-solid fa-xmark text-xl"></i>
@@ -394,6 +395,9 @@
                 }
             }
             
+            // FIX: Reset panning state
+            touchState.panning = false;
+
             if(touchState.pinching && e.touches.length < 2) {
                 touchState.pinching = false;
                 canvasWrapper.style.transition = 'transform 0.1s ease-out';
@@ -482,14 +486,17 @@
                 // FIX: Live preview update
                 const pos = getEventPos(e);
                 mousePos = pos;
-                redrawCanvas(); // Canlı çizimi güncelle
-
+                
+                // FIX: Hover check before redraw
                 hoverStartPoint = false;
                 if (appState === 'CALIBRATING' && currentDrawing.points.length > 2) {
                     const startPt = currentDrawing.points[0];
                     const dist = Math.hypot(startPt.x - pos.x, startPt.y - pos.y);
                     if (dist < 20) hoverStartPoint = true;
                 }
+
+                redrawCanvas(); // Canlı çizimi güncelle
+
             } else {
                 follower.classList.add('opacity-0');
                 drawCanvas.style.cursor = touchState.panning ? 'grabbing' : 'default';
@@ -497,8 +504,11 @@
         }
 
         canvasAreaEl.addEventListener('wheel', (e) => {
-            if (e.ctrlKey) return; e.preventDefault();
-            changeZoom(e.deltaY > 0 ? -0.1 : 0.1);
+            e.preventDefault();
+            // FIX: Trackpad pinch usually sets ctrlKey. Mouse wheel does not.
+            // Allow zoom in both cases if user wants zoom on wheel.
+            const delta = e.deltaY > 0 ? -0.1 : 0.1;
+            changeZoom(delta);
         }, { passive: false });
 
         // --- INIT ---
